@@ -1,15 +1,29 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-
-	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/client-go/rest"
+	"strings"
 
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
+	cmmetav1 "github.com/cert-manager/cert-manager/pkg/apis/meta/v1"
+	"github.com/cert-manager/cert-manager/pkg/issuer/acme/dns/util"
+	"github.com/pkg/errors"
+	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
+
+	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/auth/basic"
+	"github.com/huaweicloud/huaweicloud-sdk-go-v3/core/config"
+	reg "github.com/huaweicloud/huaweicloud-sdk-go-v3/core/region"
+	dns "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2"
+	dnsMdl "github.com/huaweicloud/huaweicloud-sdk-go-v3/services/dns/v2/model"
 )
 
 var GroupName = os.Getenv("GROUP_NAME")
@@ -25,7 +39,7 @@ func main() {
 	// webhook, where the Name() method will be used to disambiguate between
 	// the different implementations.
 	cmd.RunWebhookServer(GroupName,
-		&customDNSProviderSolver{},
+		&huaweiDNSProviderSolver{},
 	)
 }
 
@@ -33,14 +47,15 @@ func main() {
 // 'present' an ACME challenge TXT record for your own DNS provider.
 // To do so, it must implement the `github.com/cert-manager/cert-manager/pkg/acme/webhook.Solver`
 // interface.
-type customDNSProviderSolver struct {
+type huaweiDNSProviderSolver struct {
 	// If a Kubernetes 'clientset' is needed, you must:
 	// 1. uncomment the additional `client` field in this structure below
 	// 2. uncomment the "k8s.io/client-go/kubernetes" import at the top of the file
 	// 3. uncomment the relevant code in the Initialize method below
 	// 4. ensure your webhook's service account has the required RBAC role
 	//    assigned to it for interacting with the Kubernetes APIs you need.
-	//client kubernetes.Clientset
+	client       *kubernetes.Clientset
+	huaweiClient *dns.DnsClient
 }
 
 // customDNSProviderConfig is a structure that is used to decode into when
@@ -57,14 +72,15 @@ type customDNSProviderSolver struct {
 // You should not include sensitive information here. If credentials need to
 // be used by your provider here, you should reference a Kubernetes Secret
 // resource and fetch these credentials using a Kubernetes clientset.
-type customDNSProviderConfig struct {
+type huaweiDNSProviderConfig struct {
 	// Change the two fields below according to the format of the configuration
 	// to be decoded.
 	// These fields will be set by users in the
 	// `issuer.spec.acme.dns01.providers.webhook.config` field.
 
-	//Email           string `json:"email"`
-	//APIKeySecretRef v1alpha1.SecretKeySelector `json:"apiKeySecretRef"`
+	AccessKey cmmetav1.SecretKeySelector `json:"accessKeyRef"`
+	SecretKey cmmetav1.SecretKeySelector `json:"secretKeyRef"`
+	RegionId  string                     `json:"regionId"`
 }
 
 // Name is used as the name for this DNS solver when referencing it on the ACME
@@ -73,8 +89,8 @@ type customDNSProviderConfig struct {
 // solvers configured with the same Name() **so long as they do not co-exist
 // within a single webhook deployment**.
 // For example, `cloudflare` may be used as the name of a solver.
-func (c *customDNSProviderSolver) Name() string {
-	return "my-custom-solver"
+func (h *huaweiDNSProviderSolver) Name() string {
+	return "huawei"
 }
 
 // Present is responsible for actually presenting the DNS record with the
@@ -82,16 +98,26 @@ func (c *customDNSProviderSolver) Name() string {
 // This method should tolerate being called multiple times with the same value.
 // cert-manager itself will later perform a self check to ensure that the
 // solver has correctly configured the DNS provider.
-func (c *customDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
+func (h *huaweiDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
 		return err
 	}
 
-	// TODO: do something more useful with the decoded configuration
-	fmt.Printf("Decoded configuration %v", cfg)
+	h.huaweiClient, err = h.getHuaweiClient(ch, cfg)
+	if err != nil {
+		return err
+	}
 
-	// TODO: add code that sets a record in the DNS provider's console
+	zoneId, err := h.getZoneId(ch.ResolvedZone)
+	if err != nil {
+		return err
+	}
+
+	err = h.addTxtRecord(zoneId, ch.ResolvedZone, ch.ResolvedFQDN, ch.Key)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -101,8 +127,41 @@ func (c *customDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 // value provided on the ChallengeRequest should be cleaned up.
 // This is in order to facilitate multiple DNS validations for the same domain
 // concurrently.
-func (c *customDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
-	// TODO: add code that deletes a record from the DNS provider's console
+func (h *huaweiDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
+	cfg, err := loadConfig(ch.Config)
+	if err != nil {
+		return err
+	}
+
+	h.huaweiClient, err = h.getHuaweiClient(ch, cfg)
+	if err != nil {
+		return err
+	}
+
+	zoneId, err := h.getZoneId(ch.ResolvedZone)
+	if err != nil {
+		return err
+	}
+
+	records, err := h.getRecords(zoneId, ch.ResolvedZone, ch.ResolvedFQDN)
+	if err != nil {
+		return err
+	}
+
+	for _, record := range records {
+		r := *record.Records
+		if r[0] != ch.Key {
+			continue
+		}
+		req := &dnsMdl.DeleteRecordSetRequest{}
+		req.ZoneId = zoneId
+		req.RecordsetId = *record.Id
+		resp, err := h.huaweiClient.DeleteRecordSet(req)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete record")
+		}
+		klog.Infof("Delete record id %s in Huawei Cloud DNS", *resp.Id)
+	}
 	return nil
 }
 
@@ -115,25 +174,19 @@ func (c *customDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 // provider accounts.
 // The stopCh can be used to handle early termination of the webhook, in cases
 // where a SIGTERM or similar signal is sent to the webhook process.
-func (c *customDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
-	///// UNCOMMENT THE BELOW CODE TO MAKE A KUBERNETES CLIENTSET AVAILABLE TO
-	///// YOUR CUSTOM DNS PROVIDER
-
-	//cl, err := kubernetes.NewForConfig(kubeClientConfig)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//c.client = cl
-
-	///// END OF CODE TO MAKE KUBERNETES CLIENTSET AVAILABLE
+func (h *huaweiDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
+	cl, err := kubernetes.NewForConfig(kubeClientConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to new kubernetes client")
+	}
+	h.client = cl
 	return nil
 }
 
 // loadConfig is a small helper function that decodes JSON configuration into
 // the typed config struct.
-func loadConfig(cfgJSON *extapi.JSON) (customDNSProviderConfig, error) {
-	cfg := customDNSProviderConfig{}
+func loadConfig(cfgJSON *extapi.JSON) (huaweiDNSProviderConfig, error) {
+	cfg := huaweiDNSProviderConfig{}
 	// handle the 'base case' where no configuration has been provided
 	if cfgJSON == nil {
 		return cfg, nil
@@ -143,4 +196,139 @@ func loadConfig(cfgJSON *extapi.JSON) (customDNSProviderConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func (h *huaweiDNSProviderSolver) loadSecretData(selector cmmetav1.SecretKeySelector, ns string) ([]byte, error) {
+	secret, err := h.client.CoreV1().Secrets(ns).Get(context.TODO(), selector.Name, metav1.GetOptions{})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to load secret %q", ns+"/"+selector.Name)
+	}
+
+	if data, ok := secret.Data[selector.Key]; ok {
+		return data, nil
+	}
+
+	return nil, errors.Errorf("no key %q in secret %q", selector.Key, ns+"/"+selector.Name)
+}
+
+func (h *huaweiDNSProviderSolver) getHuaweiClient(ch *v1alpha1.ChallengeRequest, cfg huaweiDNSProviderConfig) (*dns.DnsClient, error) {
+	accessKey, err := h.loadSecretData(cfg.AccessKey, ch.ResourceNamespace)
+	if err != nil {
+		return nil, err
+	}
+	secretKey, err := h.loadSecretData(cfg.SecretKey, ch.ResourceNamespace)
+	if err != nil {
+		return nil, err
+	}
+
+	basicAuth, err := basic.NewCredentialsBuilder().
+		WithAk(string(accessKey)).
+		WithSk(string(secretKey)).
+		SafeBuild()
+	if err != nil {
+		return nil, err
+	}
+
+	reg := reg.NewRegion(cfg.RegionId, fmt.Sprintf("https://dns.%s.myhuaweicloud.com", cfg.RegionId))
+	dnsHttpClient, err := dns.DnsClientBuilder().
+		WithRegion(reg).
+		WithCredential(basicAuth).
+		WithHttpConfig(config.DefaultHttpConfig()).
+		SafeBuild()
+	if err != nil {
+		return nil, err
+	}
+	client := dns.NewDnsClient(dnsHttpClient)
+	return client, nil
+}
+
+func (h *huaweiDNSProviderSolver) getZoneId(resolvedZone string) (string, error) {
+	zoneList := make([]dnsMdl.PrivateZoneResp, 0)
+
+	req := &dnsMdl.ListPrivateZonesRequest{}
+	req.Offset = ptr.To[int32](0)
+	req.Limit = ptr.To[int32](50)
+	totalCount := int32(50)
+
+	for *req.Offset < totalCount {
+		resp, err := h.huaweiClient.ListPrivateZones(req)
+		if err != nil {
+			return "", errors.Wrap(err, "failed to list domains for Huawei Cloud DNS")
+		}
+
+		for _, zone := range *resp.Zones {
+			zoneList = append(zoneList, zone)
+		}
+		totalCount = *resp.Metadata.TotalCount
+		req.Offset = ptr.To[int32](*req.Offset + int32(len(*resp.Zones)))
+	}
+
+	authZone, err := util.FindZoneByFqdn(context.Background(), resolvedZone, util.RecursiveNameservers)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to find zone by fqdn")
+	}
+
+	var hostedZone dnsMdl.PrivateZoneResp
+	for _, item := range zoneList {
+		if *item.Name == util.UnFqdn(authZone) {
+			hostedZone = item
+			break
+		}
+	}
+	if *hostedZone.Id == "" {
+		return "", fmt.Errorf("zone %s not found in HuaweiCloud DNS", resolvedZone)
+	}
+	return fmt.Sprintf("%v", *hostedZone.Id), nil
+}
+
+func (h *huaweiDNSProviderSolver) addTxtRecord(zone, fqdn, value, zoneId string) error {
+	req := &dnsMdl.CreateRecordSetRequest{}
+	req.ZoneId = zoneId
+	req.Body.Name = extractRecordName(fqdn, zone)
+	req.Body.Type = "TXT"
+	req.Body.Records = []string{value}
+	resp, err := h.huaweiClient.CreateRecordSet(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to create txt record")
+	}
+	klog.Infof("Create %s record named '%s' to '%s' with ttl %d for Huawei Cloud DNS: Record ID=%s", *resp.Type, *resp.Name, resp.Records, *resp.Ttl, *resp.Id)
+	return nil
+}
+
+func extractRecordName(fqdn, zone string) string {
+	if idx := strings.Index(fqdn, "."+zone); idx != -1 {
+		return fqdn[:idx]
+	}
+
+	return util.UnFqdn(fqdn)
+}
+
+func (h *huaweiDNSProviderSolver) getRecords(zoneId, zone, fqdn string) ([]dnsMdl.ListRecordSets, error) {
+	recordName := extractRecordName(fqdn, zone)
+	req := &dnsMdl.ListRecordSetsByZoneRequest{}
+	req.ZoneId = zoneId
+	req.Name = &recordName
+
+	req.Offset = ptr.To[int32](0)
+	req.Limit = ptr.To[int32](50)
+	totalCount := int32(50)
+
+	recordList := make([]dnsMdl.ListRecordSets, 0)
+	for *req.Offset < totalCount {
+		resp, err := h.huaweiClient.ListRecordSetsByZone(req)
+		if err != nil {
+			return nil, errors.Wrap(err, "fail to list records for Huawei Cloud DNS")
+		}
+
+		for _, recordSet := range *resp.Recordsets {
+			if *recordSet.Default {
+				continue
+			}
+			recordList = append(recordList, recordSet)
+		}
+
+		totalCount = *resp.Metadata.TotalCount
+		req.Offset = ptr.To[int32](*req.Offset + int32(len(*resp.Recordsets)))
+	}
+	return recordList, nil
 }
