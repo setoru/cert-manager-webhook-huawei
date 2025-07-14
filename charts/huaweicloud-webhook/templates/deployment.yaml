@@ -1,26 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "example-webhook.fullname" . }}
-  namespace: {{ .Release.Namespace | quote }}
+  name: {{ include "huaweicloud-webhook.fullname" . }}
   labels:
-    app: {{ include "example-webhook.name" . }}
-    chart: {{ include "example-webhook.chart" . }}
+    app: {{ include "huaweicloud-webhook.name" . }}
+    chart: {{ include "huaweicloud-webhook.chart" . }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ include "example-webhook.name" . }}
+      app: {{ include "huaweicloud-webhook.name" . }}
       release: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app: {{ include "example-webhook.name" . }}
+        app: {{ include "huaweicloud-webhook.name" . }}
         release: {{ .Release.Name }}
     spec:
-      serviceAccountName: {{ include "example-webhook.fullname" . }}
+      serviceAccountName: {{ include "huaweicloud-webhook.fullname" . }}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -28,12 +27,16 @@ spec:
           args:
             - --tls-cert-file=/tls/tls.crt
             - --tls-private-key-file=/tls/tls.key
+            - --secure-port={{ .Values.securePort }}
           env:
             - name: GROUP_NAME
               value: {{ .Values.groupName | quote }}
+          {{- if .Values.env }}
+{{- toYaml .Values.extraEnv | nindent 12 }}
+          {{- end }}
           ports:
             - name: https
-              containerPort: 443
+              containerPort: {{ .Values.securePort }}
               protocol: TCP
           livenessProbe:
             httpGet:
@@ -51,10 +54,14 @@ spec:
               readOnly: true
           resources:
 {{ toYaml .Values.resources | indent 12 }}
+{{ if .Values.image.privateRegistry.enabled }}
+      imagePullSecrets:
+        - name: {{ .Values.image.privateRegistry.dockerRegistrySecret }}
+{{ end }}
       volumes:
         - name: certs
           secret:
-            secretName: {{ include "example-webhook.servingCertificate" . }}
+            secretName: {{ include "huaweicloud-webhook.servingCertificate" . }}
     {{- with .Values.nodeSelector }}
       nodeSelector:
 {{ toYaml . | indent 8 }}
