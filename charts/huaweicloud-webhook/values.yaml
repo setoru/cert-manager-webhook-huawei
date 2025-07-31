@@ -14,12 +14,9 @@ certManager:
   serviceAccountName: cert-manager
 
 image:
-  repository: swr.ap-southeast-1.myhuaweicloud.com/chenweikai/cert-manager-webhook-huaweicloud
+  repository: swr.ap-southeast-1.myhuaweicloud.com/huaweiclouddeveloper/cert-manager-webhook-huawei
   tag: latest
   pullPolicy: IfNotPresent
-  privateRegistry:
-    enabled: true
-    dockerRegistrySecret: default-secret
 
 nameOverride: ""
 fullnameOverride: ""
