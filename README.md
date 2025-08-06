@@ -76,7 +76,7 @@ kubectl create secret generic huaweicloud-secret --from-literal="accessKey=<Your
 git clone https://github.com/HuaweiCloudDeveloper/cert-manager-webhook-huawei
 cd cert-manager-webhook-huawei
 # Modify groupName in charts/huaweicloud-webhook/values.yaml to your actual domain
-helm install cert-manager-webhook-huaweicloud ./charts/huaweicloud-webhook -n cert-manager
+helm install cert-manager-webhook-huawei ./charts/huaweicloud-webhook -n cert-manager
 ```
 
 3. Create ClusterIssuer:
@@ -95,7 +95,7 @@ spec:
     - dns01:
         webhook:
             groupName: example.com  # Your domain
-            solverName: huaweicloud
+            solverName: huawei
             config:
               accessKeyRef:
                 key: accessKey
