@@ -1,0 +1,11 @@
+{
+  "region": "",
+  "accessKeyRef": {
+    "name": "huaweicloud-secret",
+    "key": "accessKey"
+  },
+  "secretKeyRef": {
+    "name": "huaweicloud-secret",
+    "key": "secretKey"
+  }
+}
