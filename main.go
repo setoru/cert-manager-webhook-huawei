@@ -256,9 +256,7 @@ func (h *huaweiDNSProviderSolver) getZoneId(resolvedZone string) (string, error)
 			return "", errors.Wrap(err, "failed to list domains for Huawei Cloud DNS")
 		}
 
-		for _, zone := range *resp.Zones {
-			zoneList = append(zoneList, zone)
-		}
+		zoneList = append(zoneList, *resp.Zones...)
 		totalCount = *resp.Metadata.TotalCount
 		req.Offset = ptr.To[int32](*req.Offset + int32(len(*resp.Zones)))
 	}
