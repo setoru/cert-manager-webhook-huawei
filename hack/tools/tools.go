@@ -24,7 +24,4 @@ import (
 
 	_ "github.com/goreleaser/goreleaser"
 	_ "github.com/itchyny/gojq/cmd/gojq"
-	_ "sigs.k8s.io/cluster-api/hack/tools/mdbook/embed"
-	_ "sigs.k8s.io/cluster-api/hack/tools/mdbook/releaselink"
-	_ "sigs.k8s.io/kustomize/kustomize/v5"
 )
