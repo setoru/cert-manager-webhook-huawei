@@ -1,0 +1,9 @@
+builds: []
+
+archives: []
+
+release:
+  discussion_category_name: General
+  extra_files:
+    - glob: ./out/*
+  draft: true

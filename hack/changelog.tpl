@@ -1,6 +1,6 @@
-# Release notes for Cluster API Provider Huawei (CAPHW) <RELEASE_VERSION>
+# Release notes for Cert Manager Webhook Huawei <RELEASE_VERSION>
 
-[Documentation](https://github.com/HuaweiCloudDeveloper/cluster-api-provider-huawei)
+[Documentation](https://github.com/HuaweiCloudDeveloper/cert-manager-webhook-huawei)
 
 # Changelog since <PREVIOUS_VERSION>
 
