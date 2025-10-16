@@ -1,3 +1,6 @@
+ROOT_DIR_RELATIVE := .
+include $(ROOT_DIR_RELATIVE)/common.mk
+
 GO ?= $(shell which go)
 OS ?= $(shell $(GO) env GOOS)
 ARCH ?= $(shell $(GO) env GOARCH)
@@ -42,6 +45,9 @@ _test/kubebuilder-$(KUBEBUILDER_VERSION)-$(OS)-$(ARCH)/etcd _test/kubebuilder-$(
 .PHONY: clean
 clean:
 	rm -r _test $(OUT)
+	rm -rf $(RELEASE_DIR)
+	rm -rf hack/tools/bin
+
 
 .PHONY: build
 build:

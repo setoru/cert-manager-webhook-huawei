@@ -1,4 +1,4 @@
-module github.com/cert-manager/cert-manager-webhook-huawei
+module github.com/HuaweiCloudDeveloper/cert-manager-webhook-huawei
 
 go 1.22.0
 

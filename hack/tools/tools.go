@@ -23,5 +23,4 @@ import (
 	_ "embed"
 
 	_ "github.com/goreleaser/goreleaser"
-	_ "github.com/itchyny/gojq/cmd/gojq"
 )
