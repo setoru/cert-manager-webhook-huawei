@@ -16,6 +16,8 @@ jobs:
     steps:
     - name: Clone the code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
     - name: Set version info
       run: |
         echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
