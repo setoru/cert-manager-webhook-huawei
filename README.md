@@ -1,5 +1,7 @@
 # cert-manager-webhook-huawei
 
+[简体中文](./README_zh.md)
+
 ## Deployment on CCE
 
 ### Deploy nginx-ingress-controller
