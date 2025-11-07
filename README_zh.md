@@ -2,6 +2,8 @@
 
 [English](./README.md)
 
+**cert-manager-webhook-huawei** 是一个专为华为云设计的 Cert-Manager Webhook 插件，支持使用 DNS-01 验证方式自动签发和管理 TLS 证书，方便在华为云 CCE 集群中部署和管理 HTTPS 服务。
+
 ## 在 CCE 上部署
 
 ### 部署 nginx-ingress-controller
